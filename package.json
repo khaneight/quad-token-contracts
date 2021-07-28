@@ -1,0 +1,11 @@
+{
+  "name": "quad-token",
+  "version": "1.0.0",
+  "main": "index.js",
+  "license": "GPL-3.0",
+  "dependencies": {
+    "@openzeppelin/contracts": "4.2.0",
+    "dotenv": "^10.0.0",
+    "truffle-hdwallet-provider": "^1.0.17"
+  }
+}
