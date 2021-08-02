@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0
+// SPDX-License-Identifier: GPL-3.0-only
 
 pragma solidity ^0.8.0;
 
@@ -64,6 +64,13 @@ contract TokenVesting is Context {
     }
 
     /**
+     * @return address of multisig contract
+     */
+    function getMultiSigContract() public view returns (address) {
+        return multiSigContract;
+    }
+
+    /**
      * @return Vesting schedule for specified recipient
      */
     function getVestingSchedule(address _recipient) public view returns (vestingSchedule memory) {
@@ -91,7 +98,7 @@ contract TokenVesting is Context {
         require(_vestingDuration > 0, "TokenVesting: vesting duration zero");
         require(_vestingDuration <= 100, "TokenVesting: vesting duration longer than 100 months");
         require(_vestingDuration >= _vestingCliff, "TokenVesting: vesting cliff longer than duration");
-        uint amountVestedPerMonth = _amount / _vestingDuration;
+        uint256 amountVestedPerMonth = _amount / _vestingDuration;
         require(amountVestedPerMonth > 0, "TokenVesting: zero tokens vested per month");
 
         vestingSchedule memory vest = vestingSchedule({
@@ -115,6 +122,62 @@ contract TokenVesting is Context {
             _vestingCliff
         );
     }
+
+    /**
+     * @notice Adds a new vesting schedule for a batch of recipients. The nth position in the amounts and 
+     * recipients arrays corresponds to the amount of vesting tokens assigned to each recipient. All 
+     * recipients in each batch are given a single vesting schedule. The total amount of tokens are sent
+     * from the multisig contract in one tx. This function is authorized for the multisig contract only.
+     * @param _recipients Array of address of beneficiaries entitled to vesting tokens
+     * @param _startTime Start of vesting schedule as seconds since unix epoch
+     * @param _amounts Array of numbers of vesting tokens assigned to each recipient
+     * @param _vestingDuration Total duration of vesting schedule in months
+     * @param _vestingCliff Total duration of vesting cliff in months
+     */
+    function addRecipientBatch(
+        address[] memory _recipients, 
+        uint256 _startTime, 
+        uint256[] memory _amounts, 
+        uint16 _vestingDuration, 
+        uint16 _vestingCliff
+    ) public onlyMultiSigContract {
+        require(_recipients.length == _amounts.length, "TokenVesting: recipients and amounts mismatch");
+        require(_vestingDuration > 0, "TokenVesting: vesting duration zero");
+        require(_vestingDuration <= 100, "TokenVesting: vesting duration longer than 100 months");
+        require(_vestingDuration >= _vestingCliff, "TokenVesting: vesting cliff longer than duration");
+
+        uint256 amountTotal = 0;
+        for (uint i = 0; i < _recipients.length; i++) {
+            address recipient = _recipients[i];
+            require(vestingSchedules[recipient].startTime == 0, "TokenVesting: recipient already added");
+            uint256 amount = _amounts[i];
+            uint256 amountVestedPerMonth = amount / _vestingDuration;
+            require(amountVestedPerMonth > 0, "TokenVesting: zero tokens vested per month");
+
+            vestingSchedule memory vest = vestingSchedule({
+                startTime: _startTime == 0 ? block.timestamp : _startTime,
+                amount: amount,
+                vestingDuration: _vestingDuration,
+                vestingCliff: _vestingCliff,
+                monthsClaimed: 0,
+                tokensClaimed: 0
+            });
+
+            vestingSchedules[recipient] = vest;
+            amountTotal += amount;
+
+            emit vestingScheduleAdded(
+                recipient, 
+                vest.startTime, 
+                amount, 
+                _vestingDuration,
+                _vestingCliff
+            );
+        }
+        
+        // Transfer tokens from multisig to this contract, reverts on failure
+        getToken().safeTransferFrom(multiSigContract, address(this), amountTotal);
+    }
     
     /**
      * @notice Calculates the total unclaimed months and tokens vested for the recipient
@@ -132,7 +195,7 @@ contract TokenVesting is Context {
         uint256 elapsedTime = block.timestamp - vest.startTime;
         uint16 elapsedMonths = uint16(elapsedTime / SECONDS_PER_MONTH);
         
-        // Check if cliff was reachedcx
+        // Check if cliff was reached
         if (elapsedMonths < vest.vestingCliff) {
             return (0, 0);
         }
