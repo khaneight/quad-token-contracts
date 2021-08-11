@@ -3,7 +3,6 @@
 pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts/utils/Context.sol";
 
 /**
  * @title Contract for executing vesting schedules of an ERC20 token
@@ -12,13 +11,14 @@ import "@openzeppelin/contracts/utils/Context.sol";
  * since it is authorized to add recipients and will initially hold tokens until they are sent to this 
  * contract when new recipients are added.
  */
-contract TokenVesting is Context {
+contract TokenVesting {
     using SafeERC20 for IERC20;
 
     IERC20 private immutable token;
     address private multiSigContract;
 
     uint32 private constant SECONDS_PER_MONTH = 2628000;
+    uint32 private constant SECONDS_PER_YEAR = SECONDS_PER_MONTH * 12;
 
     struct vestingSchedule {
         uint256 startTime;
@@ -41,7 +41,7 @@ contract TokenVesting is Context {
     event vestedTokensClaimed(address recipient, uint256 amountClaimed);
 
     modifier onlyMultiSigContract {
-        require(_msgSender() == multiSigContract, "TokenVesting: unauthorized address");
+        require(msg.sender == multiSigContract, "TokenVesting: unauthorized address");
         _;
     }
 
@@ -98,6 +98,8 @@ contract TokenVesting is Context {
         require(_vestingDuration > 0, "TokenVesting: vesting duration zero");
         require(_vestingDuration <= 100, "TokenVesting: vesting duration longer than 100 months");
         require(_vestingDuration >= _vestingCliff, "TokenVesting: vesting cliff longer than duration");
+        require(_startTime <= block.timestamp + SECONDS_PER_YEAR, "TokenVesting: start time more than a year in future");
+        require(_startTime >= block.timestamp - SECONDS_PER_YEAR, "TokenVesting: start time more than a year in past");
         uint256 amountVestedPerMonth = _amount / _vestingDuration;
         require(amountVestedPerMonth > 0, "TokenVesting: zero tokens vested per month");
 
@@ -145,6 +147,8 @@ contract TokenVesting is Context {
         require(_vestingDuration > 0, "TokenVesting: vesting duration zero");
         require(_vestingDuration <= 100, "TokenVesting: vesting duration longer than 100 months");
         require(_vestingDuration >= _vestingCliff, "TokenVesting: vesting cliff longer than duration");
+        require(_startTime <= block.timestamp + SECONDS_PER_YEAR, "TokenVesting: start time more than a year in future");
+        require(_startTime >= block.timestamp - SECONDS_PER_YEAR, "TokenVesting: start time more than a year in past");
 
         uint256 amountTotal = 0;
         for (uint i = 0; i < _recipients.length; i++) {
