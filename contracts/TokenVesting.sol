@@ -153,6 +153,7 @@ contract TokenVesting {
         uint256 amountTotal = 0;
         for (uint i = 0; i < _recipients.length; i++) {
             address recipient = _recipients[i];
+            require(recipient != address(0), "TokenVesting: zero address");
             require(vestingSchedules[recipient].startTime == 0, "TokenVesting: recipient already added");
             uint256 amount = _amounts[i];
             uint256 amountVestedPerMonth = amount / _vestingDuration;
