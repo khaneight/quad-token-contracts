@@ -7,7 +7,8 @@ const MultiSigWallet = artifacts.require("MultiSigWallet");
 const TokenVesting = artifacts.require("TokenVesting");
 
 const { expect } = chai;
-chai.use(bnChai(web3.utils.BN));
+const BN = web3.utils.BN;
+chai.use(bnChai(BN));
 
 contract("TokenVestingUnitTest", accounts => {
     const SECONDS_PER_MONTH = 2628000;
@@ -24,19 +25,47 @@ contract("TokenVestingUnitTest", accounts => {
     const ACCOUNT_7 = accounts[7];
     const ACCOUNT_8 = accounts[8];
     const ACCOUNT_9 = accounts[9];
-    
+
     let token;
     let multisig;
     let vesting;
+
+    const setupContracts = async () => {
+        // create and initialize new multisig wallet
+        multisig = await MultiSigWallet.new();
+        await multisig.init([ACCOUNT_0, ACCOUNT_1, ACCOUNT_2]);
+
+        // create token and mint total supply into multisig wallet
+        const totalSupply = web3.utils.toWei("400000000");
+        token = await QUAD.new([multisig.address], [totalSupply]);
+        const totalBalance = await token.balanceOf(multisig.address);
+        expect(totalBalance).to.eq.BN(totalSupply);
+
+        // create vesting contract and approve spending from multisig wallet
+        vesting = await TokenVesting.new(token.address, multisig.address);
+        const txData = token.contract.methods.increaseAllowance(vesting.address, totalSupply).encodeABI();
+        const params = {
+            msgSenderAddress: ACCOUNT_0,
+            otherSignerAddress: ACCOUNT_1,
+            toAddress: token.address,
+            amount: 0,
+            data: txData,
+            expireTime: await helpers.currentBlockTime() + 600,
+            sequenceId: await multisig.getNextSequenceId()
+        };
+        await sendMultiSigHelper(params, true);
+        const totalAllowance = await token.allowance(multisig.address, vesting.address);
+        expect(totalAllowance).to.eq.BN(totalSupply);
+    }
 
     const sendMultiSigHelper = async (params, expectSuccess) => {
         const signature = helpers.signMultiSigTx(params);
         if (expectSuccess) {
             await helpers.expectSuccessTx(multisig.sendMultiSig(
                 params.toAddress,
-                params.amount, 
-                params.data, 
-                params.expireTime, 
+                params.amount,
+                params.data,
+                params.expireTime,
                 params.sequenceId,
                 signature,
                 { from: params.msgSenderAddress }
@@ -44,9 +73,9 @@ contract("TokenVestingUnitTest", accounts => {
         } else {
             await helpers.expectRevertTx(multisig.sendMultiSig(
                 params.toAddress,
-                params.amount, 
-                params.data, 
-                params.expireTime, 
+                params.amount,
+                params.data,
+                params.expireTime,
                 params.sequenceId,
                 signature,
                 { from: params.msgSenderAddress }
@@ -54,35 +83,11 @@ contract("TokenVestingUnitTest", accounts => {
         }
     }
 
-    before("Setup contracts before each test", async () => {
-        // create and initialize new multisig wallet
-        multisig = await MultiSigWallet.new()
-        await multisig.init([ACCOUNT_0, ACCOUNT_1, ACCOUNT_2]);
-
-        // create token and mint total supply into multisig wallet
-        const totalSupply = web3.utils.toWei("400000000")
-        token = await QUAD.new([multisig.address], [totalSupply]);
-        const totalBalance = await token.balanceOf(multisig.address);
-        expect(totalBalance).to.eq.BN(totalSupply);
-
-        // create vesting contract and approve spending from multisig wallet
-        vesting = await TokenVesting.new(token.address, multisig.address);
-        const approveTx = token.contract.methods.increaseAllowance(vesting.address, totalSupply).encodeABI();
-        const params = {
-            msgSenderAddress: ACCOUNT_0,
-            otherSignerAddress: ACCOUNT_1,
-            toAddress: token.address,
-            amount: 0,
-            data: approveTx,
-            expireTime: await helpers.currentBlockTime() + 600,
-            sequenceId: await multisig.getNextSequenceId()
-        };
-        await sendMultiSigHelper(params, true);
-        const totalAllowance = await token.allowance(multisig.address, vesting.address);
-        expect(totalAllowance).to.eq.BN(totalSupply);
-    });
-
     describe("Initial deployment testing", () => {
+        before("Setup contracts before running all tests", async () => {
+            await setupContracts();
+        });
+
         it("should set the Token correctly", async () => {
             const tokenAddress = await vesting.getToken();
             expect(token.address).to.equal(tokenAddress);
@@ -96,28 +101,32 @@ contract("TokenVestingUnitTest", accounts => {
         it("should fail with 0 address for Token", async () => {
             let vestingContract = "";
             try {
-              vestingContract = await TokenVesting.new(ZERO_ADDRESS, multisig.address);
-            } catch (err) {}
+                vestingContract = await TokenVesting.new(ZERO_ADDRESS, multisig.address);
+            } catch (err) { }
             expect(vestingContract).to.equal("");
         });
 
         it("should fail with 0 address for MultiSig", async () => {
             let vestingContract = "";
             try {
-              vestingContract = await TokenVesting.new(token.address, ZERO_ADDRESS);
-            } catch (err) {}
+                vestingContract = await TokenVesting.new(token.address, ZERO_ADDRESS);
+            } catch (err) { }
             expect(vestingContract).to.equal("");
         });
     });
 
     describe("When setting vesting schedules", async () => {
+        before("Setup contracts before running all tests", async () => {
+            await setupContracts();
+        });
+
         it("should add new recipient correctly", async () => {
             const currentTime = await helpers.currentBlockTime();
             const txData = vesting.contract.methods.addRecipient(
-                ACCOUNT_3, 
-                currentTime, 
-                web3.utils.toWei("1000"), 
-                24, 
+                ACCOUNT_3,
+                currentTime,
+                web3.utils.toWei("1000"),
+                24,
                 6
             ).encodeABI();
             const params = {
@@ -130,7 +139,7 @@ contract("TokenVestingUnitTest", accounts => {
                 sequenceId: await multisig.getNextSequenceId()
             };
             await sendMultiSigHelper(params, true);
-    
+
             const vest = await vesting.getVestingSchedule(ACCOUNT_3);
             expect(parseInt(vest.startTime, 10)).to.equal(currentTime);
             expect(vest.amount).to.eq.BN(web3.utils.toWei("1000"));
@@ -145,10 +154,10 @@ contract("TokenVestingUnitTest", accounts => {
             const recipients = [ACCOUNT_7, ACCOUNT_8, ACCOUNT_9];
             const amounts = [web3.utils.toWei("1000"), web3.utils.toWei("2000"), web3.utils.toWei("3000")];
             const txData = vesting.contract.methods.addRecipientBatch(
-                recipients, 
-                currentTime, 
-                amounts, 
-                24, 
+                recipients,
+                currentTime,
+                amounts,
+                24,
                 6
             ).encodeABI();
             const params = {
@@ -161,7 +170,7 @@ contract("TokenVestingUnitTest", accounts => {
                 sequenceId: await multisig.getNextSequenceId()
             };
             await sendMultiSigHelper(params, true);
-    
+
             for (let i = 0; i < recipients.length; i++) {
                 const vest = await vesting.getVestingSchedule(recipients[i]);
                 expect(parseInt(vest.startTime, 10)).to.equal(currentTime);
@@ -178,10 +187,10 @@ contract("TokenVestingUnitTest", accounts => {
             const recipients = [ACCOUNT_4, ACCOUNT_5, ACCOUNT_6];
             const amounts = [web3.utils.toWei("1000"), web3.utils.toWei("2000")];
             const txData = vesting.contract.methods.addRecipientBatch(
-                recipients, 
-                currentTime, 
-                amounts, 
-                24, 
+                recipients,
+                currentTime,
+                amounts,
+                24,
                 6
             ).encodeABI();
             const params = {
@@ -199,10 +208,10 @@ contract("TokenVestingUnitTest", accounts => {
         it("should fail when recipient already has vesting schedule", async () => {
             const currentTime = await helpers.currentBlockTime();
             const txData = vesting.contract.methods.addRecipient(
-                ACCOUNT_3, 
-                currentTime, 
-                web3.utils.toWei("2000"), 
-                48, 
+                ACCOUNT_3,
+                currentTime,
+                web3.utils.toWei("2000"),
+                48,
                 12
             ).encodeABI();
             const params = {
@@ -220,10 +229,10 @@ contract("TokenVestingUnitTest", accounts => {
         it("should fail when vesting duration zero", async () => {
             const currentTime = await helpers.currentBlockTime();
             const txData = vesting.contract.methods.addRecipient(
-                ACCOUNT_4, 
-                currentTime + SECONDS_PER_YEAR + SECONDS_PER_MONTH, 
-                web3.utils.toWei("1000"), 
-                0, 
+                ACCOUNT_4,
+                currentTime + SECONDS_PER_YEAR + SECONDS_PER_MONTH,
+                web3.utils.toWei("1000"),
+                0,
                 0
             ).encodeABI();
             const params = {
@@ -235,16 +244,16 @@ contract("TokenVestingUnitTest", accounts => {
                 expireTime: await helpers.currentBlockTime() + 600,
                 sequenceId: await multisig.getNextSequenceId()
             };
-            await sendMultiSigHelper(params, false); 
+            await sendMultiSigHelper(params, false);
         });
 
         it("should fail when vesting cliff longer than vesting duration", async () => {
             const currentTime = await helpers.currentBlockTime();
             const txData = vesting.contract.methods.addRecipient(
-                ACCOUNT_4, 
-                currentTime + SECONDS_PER_YEAR + SECONDS_PER_MONTH, 
-                web3.utils.toWei("1000"), 
-                12, 
+                ACCOUNT_4,
+                currentTime + SECONDS_PER_YEAR + SECONDS_PER_MONTH,
+                web3.utils.toWei("1000"),
+                12,
                 13
             ).encodeABI();
             const params = {
@@ -256,16 +265,16 @@ contract("TokenVestingUnitTest", accounts => {
                 expireTime: await helpers.currentBlockTime() + 600,
                 sequenceId: await multisig.getNextSequenceId()
             };
-            await sendMultiSigHelper(params, false); 
+            await sendMultiSigHelper(params, false);
         });
 
         it("should fail when vesting duration longer than 100 months", async () => {
             const currentTime = await helpers.currentBlockTime();
             const txData = vesting.contract.methods.addRecipient(
-                ACCOUNT_4, 
-                currentTime + SECONDS_PER_YEAR + SECONDS_PER_MONTH, 
-                web3.utils.toWei("1000"), 
-                101, 
+                ACCOUNT_4,
+                currentTime + SECONDS_PER_YEAR + SECONDS_PER_MONTH,
+                web3.utils.toWei("1000"),
+                101,
                 12
             ).encodeABI();
             const params = {
@@ -277,16 +286,16 @@ contract("TokenVestingUnitTest", accounts => {
                 expireTime: await helpers.currentBlockTime() + 600,
                 sequenceId: await multisig.getNextSequenceId()
             };
-            await sendMultiSigHelper(params, false); 
+            await sendMultiSigHelper(params, false);
         });
 
         it("should fail when vested amount per month zero", async () => {
             const currentTime = await helpers.currentBlockTime();
             const txData = vesting.contract.methods.addRecipient(
-                ACCOUNT_4, 
-                currentTime + SECONDS_PER_YEAR + SECONDS_PER_MONTH, 
-                web3.utils.toWei("0"), 
-                24, 
+                ACCOUNT_4,
+                currentTime + SECONDS_PER_YEAR + SECONDS_PER_MONTH,
+                web3.utils.toWei("0"),
+                24,
                 6
             ).encodeABI();
             const params = {
@@ -298,16 +307,16 @@ contract("TokenVestingUnitTest", accounts => {
                 expireTime: await helpers.currentBlockTime() + 600,
                 sequenceId: await multisig.getNextSequenceId()
             };
-            await sendMultiSigHelper(params, false); 
+            await sendMultiSigHelper(params, false);
         });
-        
+
         it("should fail when start time is more than a year in past", async () => {
             const currentTime = await helpers.currentBlockTime();
             const txData = vesting.contract.methods.addRecipient(
-                ACCOUNT_4, 
-                currentTime - SECONDS_PER_YEAR - SECONDS_PER_MONTH, 
-                web3.utils.toWei("1000"), 
-                24, 
+                ACCOUNT_4,
+                currentTime - SECONDS_PER_YEAR - SECONDS_PER_MONTH,
+                web3.utils.toWei("1000"),
+                24,
                 6
             ).encodeABI();
             const params = {
@@ -319,16 +328,16 @@ contract("TokenVestingUnitTest", accounts => {
                 expireTime: await helpers.currentBlockTime() + 600,
                 sequenceId: await multisig.getNextSequenceId()
             };
-            await sendMultiSigHelper(params, false); 
+            await sendMultiSigHelper(params, false);
         });
 
         it("should fail when start time is more than a year in future", async () => {
             const currentTime = await helpers.currentBlockTime();
             const txData = vesting.contract.methods.addRecipient(
-                ACCOUNT_4, 
-                currentTime + SECONDS_PER_YEAR + SECONDS_PER_MONTH, 
-                web3.utils.toWei("1000"), 
-                24, 
+                ACCOUNT_4,
+                currentTime + SECONDS_PER_YEAR + SECONDS_PER_MONTH,
+                web3.utils.toWei("1000"),
+                24,
                 6
             ).encodeABI();
             const params = {
@@ -340,7 +349,90 @@ contract("TokenVestingUnitTest", accounts => {
                 expireTime: await helpers.currentBlockTime() + 600,
                 sequenceId: await multisig.getNextSequenceId()
             };
-            await sendMultiSigHelper(params, false); 
+            await sendMultiSigHelper(params, false);
+        });
+    });
+
+    describe("When claiming vested tokens", () => {
+        beforeEach("Setup contracts before running each test", async () => {
+            await setupContracts();
+        });
+
+        const account1Amount = web3.utils.toWei("150000");
+        const account1VestingSchedules = [
+            { duration: 24, cliff: 6, startTimeMonthsBeforeNow: 0, monthsElapsed: 6 }, // 24 months duration, 6 months cliff cases
+            { duration: 24, cliff: 6, startTimeMonthsBeforeNow: 0, monthsElapsed: 7 },
+            { duration: 24, cliff: 6, startTimeMonthsBeforeNow: 0, monthsElapsed: 8 },
+            { duration: 24, cliff: 6, startTimeMonthsBeforeNow: 0, monthsElapsed: 9 },
+            { duration: 24, cliff: 6, startTimeMonthsBeforeNow: 0, monthsElapsed: 10 },
+            { duration: 24, cliff: 6, startTimeMonthsBeforeNow: 0, monthsElapsed: 11 },
+            { duration: 24, cliff: 6, startTimeMonthsBeforeNow: 0, monthsElapsed: 12 },
+            { duration: 24, cliff: 6, startTimeMonthsBeforeNow: 0, monthsElapsed: 18 },
+            { duration: 24, cliff: 6, startTimeMonthsBeforeNow: 0, monthsElapsed: 24 },
+            { duration: 6, cliff: 1, startTimeMonthsBeforeNow: 0, monthsElapsed: 1 }, // 6 months duration, 1 month cliff cases
+            { duration: 6, cliff: 1, startTimeMonthsBeforeNow: 0, monthsElapsed: 2 },
+            { duration: 6, cliff: 1, startTimeMonthsBeforeNow: 0, monthsElapsed: 3 },
+            { duration: 6, cliff: 1, startTimeMonthsBeforeNow: 0, monthsElapsed: 4 },
+            { duration: 6, cliff: 1, startTimeMonthsBeforeNow: 0, monthsElapsed: 5 },
+            { duration: 6, cliff: 1, startTimeMonthsBeforeNow: 0, monthsElapsed: 6 },
+            { duration: 6, cliff: 0, startTimeMonthsBeforeNow: 0, monthsElapsed: 1 }, // 6 months duration, 1 month cliff cases
+            { duration: 6, cliff: 0, startTimeMonthsBeforeNow: 0, monthsElapsed: 2 },
+            { duration: 6, cliff: 0, startTimeMonthsBeforeNow: 0, monthsElapsed: 3 },
+            { duration: 6, cliff: 0, startTimeMonthsBeforeNow: 0, monthsElapsed: 4 },
+            { duration: 6, cliff: 0, startTimeMonthsBeforeNow: 0, monthsElapsed: 5 },
+            { duration: 6, cliff: 0, startTimeMonthsBeforeNow: 0, monthsElapsed: 6 },
+            { duration: 15, cliff: 2, startTimeMonthsBeforeNow: 1, monthsElapsed: 1 }, // Other mixed cases of valid grant options
+            { duration: 18, cliff: 4, startTimeMonthsBeforeNow: 3, monthsElapsed: 10 },
+            { duration: 25, cliff: 7, startTimeMonthsBeforeNow: 1, monthsElapsed: 21 },
+            { duration: 33, cliff: 10, startTimeMonthsBeforeNow: 2, monthsElapsed: 26 },
+            { duration: 34, cliff: 9, startTimeMonthsBeforeNow: 4, monthsElapsed: 29 },
+            { duration: 40, cliff: 12, startTimeMonthsBeforeNow: 9, monthsElapsed: 25 }
+        ];
+
+        account1VestingSchedules.forEach(async vestProp => {
+            it(`${vestProp.monthsElapsed} months after vesting start date, user should be able to claim
+             ${vestProp.monthsElapsed}/${vestProp.duration + vestProp.startTimeMonthsBeforeNow} of their total tokens`, async () => {
+                const currentTime = await helpers.currentBlockTime();
+                const txData = await vesting.contract.methods.addRecipient(
+                    ACCOUNT_1,
+                    currentTime - vestProp.startTimeMonthsBeforeNow * SECONDS_PER_MONTH,
+                    account1Amount,
+                    vestProp.duration,
+                    vestProp.cliff
+                ).encodeABI();
+                const params = {
+                    msgSenderAddress: ACCOUNT_0,
+                    otherSignerAddress: ACCOUNT_1,
+                    toAddress: vesting.address,
+                    amount: 0,
+                    data: txData,
+                    expireTime: await helpers.currentBlockTime() + 600,
+                    sequenceId: await multisig.getNextSequenceId()
+                };
+                await sendMultiSigHelper(params, true);
+
+                await helpers.forwardTime(SECONDS_PER_MONTH * vestProp.monthsElapsed, this);
+                const balanceBefore = await token.balanceOf(ACCOUNT_1);
+                expect(balanceBefore).to.be.zero;
+
+                await vesting.releaseVestedTokens(ACCOUNT_1);
+                const balanceAfter = await token.balanceOf(ACCOUNT_1);
+
+                let expectedClaimedAmount;
+                if (vestProp.monthsElapsed >= vestProp.duration) {
+                    expectedClaimedAmount = account1Amount;
+                } else {
+                    expectedClaimedAmount = new BN(account1Amount).divn(vestProp.duration).muln(
+                        vestProp.monthsElapsed + vestProp.startTimeMonthsBeforeNow
+                    );
+                }
+
+                expect(balanceAfter).to.eq.BN(expectedClaimedAmount);
+
+                const vest = await vesting.getVestingSchedule(ACCOUNT_1);
+                expect(vest.monthsClaimed).to.eq.BN(vestProp.monthsElapsed + vestProp.startTimeMonthsBeforeNow);
+                expect(vest.tokensClaimed).to.eq.BN(expectedClaimedAmount);
+            });
         });
     });
 });

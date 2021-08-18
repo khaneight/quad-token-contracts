@@ -3,7 +3,16 @@ const ethAbi = require("ethereumjs-abi");
 const { privateKeyForAccount } = require('../testrpc/accounts.js');
 const { assert } = require("chai");
 
-exports.currentBlockTime = async () => {
+exports.web3GetClient = () => {
+    return new Promise((resolve, reject) => {
+        web3.eth.getNodeInfo((err, res) => {
+            if (err !== null) return reject(err);
+            return resolve(res);
+        });
+    });
+}
+
+exports.currentBlockTime = () => {
     const p = new Promise((resolve, reject) => {
         web3.eth.getBlock("latest", (err, res) => {
             if (err) {
@@ -33,7 +42,7 @@ exports.expectSuccessTx = async (promise) => {
     let receipt;
     try {
         ({ receipt } = await promise);
-    } catch (err) {}
+    } catch (err) { }
     expect(receipt.status, `Transaction error, but expected success`).to.be.true;
     return receipt;
 }
@@ -60,6 +69,45 @@ exports.signMultiSigTx = (params) => {
 
     const sig = ethUtil.ecsign(operationHash, privateKeyForAccount(params.otherSignerAddress));
     const serializeSignature = '0x' + Buffer.concat([sig.r, sig.s, Buffer.from([sig.v])]).toString('hex');
-    
+
     return serializeSignature;
 };
+
+exports.forwardTime = async (seconds, test) => {
+    const client = await exports.web3GetClient();
+    const p = new Promise((resolve, reject) => {
+        if (client.indexOf("TestRPC") === -1) {
+            resolve(test.skip());
+        } else {
+            console.log(`Forwarding time with ${seconds}s ...`);
+            web3.currentProvider.send(
+                {
+                    jsonrpc: "2.0",
+                    method: "evm_increaseTime",
+                    params: [seconds],
+                    id: 0
+                },
+                err => {
+                    if (err) {
+                        return reject(err);
+                    }
+                    return web3.currentProvider.send(
+                        {
+                            jsonrpc: "2.0",
+                            method: "evm_mine",
+                            params: [],
+                            id: 0
+                        },
+                        (err2, res) => {
+                            if (err2) {
+                                return reject(err2);
+                            }
+                            return resolve(res);
+                        }
+                    );
+                }
+            );
+        }
+    });
+    return p;
+}
