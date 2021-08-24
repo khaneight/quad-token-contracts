@@ -14,8 +14,9 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 contract TokenVesting {
     using SafeERC20 for IERC20;
 
-    IERC20 private immutable token;
+    IERC20 private token;
     address private multiSigContract;
+    bool private initialized = false;
 
     uint32 private constant SECONDS_PER_MONTH = 2628000;
     uint32 private constant SECONDS_PER_YEAR = SECONDS_PER_MONTH * 12;
@@ -50,8 +51,13 @@ contract TokenVesting {
         _;
     }
 
-    constructor(IERC20 _token, address _multiSigContract) 
-    nonZeroAddress(address(_token)) nonZeroAddress(_multiSigContract) {
+    modifier onlyUninitialized() {
+        require(!initialized, "Contract already initialized");
+        _;
+    }
+
+    function init(IERC20 _token, address _multiSigContract) external onlyUninitialized
+        nonZeroAddress(address(_token)) nonZeroAddress(address(_multiSigContract)) {
         token = _token;
         multiSigContract = _multiSigContract;
     }
@@ -93,7 +99,7 @@ contract TokenVesting {
         uint256 _amount, 
         uint16 _vestingDuration, 
         uint16 _vestingCliff
-    ) public onlyMultiSigContract nonZeroAddress(_recipient) {
+    ) external onlyMultiSigContract nonZeroAddress(_recipient) {
         require(vestingSchedules[_recipient].startTime == 0, "TokenVesting: recipient already added");
         require(_vestingDuration > 0, "TokenVesting: vesting duration zero");
         require(_vestingDuration <= 100, "TokenVesting: vesting duration longer than 100 months");
@@ -137,12 +143,12 @@ contract TokenVesting {
      * @param _vestingCliff Total duration of vesting cliff in months
      */
     function addRecipientBatch(
-        address[] memory _recipients, 
-        uint256 _startTime, 
-        uint256[] memory _amounts, 
-        uint16 _vestingDuration, 
+        address[] calldata _recipients,
+        uint256 _startTime,
+        uint256[] calldata _amounts,
+        uint16 _vestingDuration,
         uint16 _vestingCliff
-    ) public onlyMultiSigContract {
+    ) external onlyMultiSigContract {
         require(_recipients.length == _amounts.length, "TokenVesting: recipients and amounts mismatch");
         require(_vestingDuration > 0, "TokenVesting: vesting duration zero");
         require(_vestingDuration <= 100, "TokenVesting: vesting duration longer than 100 months");

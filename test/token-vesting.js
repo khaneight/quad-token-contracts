@@ -5,6 +5,8 @@ const helpers = require("./helpers");
 const QUAD = artifacts.require("QUAD");
 const MultiSigWallet = artifacts.require("MultiSigWallet");
 const TokenVesting = artifacts.require("TokenVesting");
+const WalletFactory = artifacts.require("WalletFactory.sol");
+const VestingFactory = artifacts.require("VestingFactory.sol");
 
 const { expect } = chai;
 const BN = web3.utils.BN;
@@ -31,9 +33,12 @@ contract("TokenVestingUnitTest", accounts => {
     let vesting;
 
     const setupContracts = async () => {
-        // create and initialize new multisig wallet
-        multisig = await MultiSigWallet.new();
-        await multisig.init([ACCOUNT_0, ACCOUNT_1, ACCOUNT_2]);
+        // create wallet factory and initialize new multisig wallet
+        const multiSigContract = await MultiSigWallet.new();
+        await multiSigContract.init([ACCOUNT_7, ACCOUNT_8, ACCOUNT_9]);
+        const walletFactory = await WalletFactory.new(multiSigContract.address);
+        const createWalletTx = await walletFactory.createWallet([ACCOUNT_0, ACCOUNT_1, ACCOUNT_2]);
+        multisig = await MultiSigWallet.at(createWalletTx.logs[0].args.walletAddress);
 
         // create token and mint total supply into multisig wallet
         const totalSupply = web3.utils.toWei("400000000");
@@ -41,8 +46,14 @@ contract("TokenVestingUnitTest", accounts => {
         const totalBalance = await token.balanceOf(multisig.address);
         expect(totalBalance).to.eq.BN(totalSupply);
 
-        // create vesting contract and approve spending from multisig wallet
-        vesting = await TokenVesting.new(token.address, multisig.address);
+        // create vesting factory and initialize new vesting contract
+        const vestingContract = await TokenVesting.new();
+        // await vestingContract.init(token.address, multisig.address);
+        const vestingFactory = await VestingFactory.new(vestingContract.address);
+        const createVestingContractTx = await vestingFactory.createVestingContract(token.address, multisig.address);
+        vesting = await TokenVesting.at(createVestingContractTx.logs[0].args.vestingAddress);
+        
+        // approve spending from multisig wallet by vesting contract
         const txData = token.contract.methods.increaseAllowance(vesting.address, totalSupply).encodeABI();
         const params = {
             msgSenderAddress: ACCOUNT_0,
@@ -99,19 +110,13 @@ contract("TokenVestingUnitTest", accounts => {
         });
 
         it("should fail with 0 address for Token", async () => {
-            let vestingContract = "";
-            try {
-                vestingContract = await TokenVesting.new(ZERO_ADDRESS, multisig.address);
-            } catch (err) { }
-            expect(vestingContract).to.equal("");
+            const vestingContract = await TokenVesting.new();
+            await helpers.expectRevertTx(vestingContract.init(ZERO_ADDRESS, multisig.address));
         });
 
         it("should fail with 0 address for MultiSig", async () => {
-            let vestingContract = "";
-            try {
-                vestingContract = await TokenVesting.new(token.address, ZERO_ADDRESS);
-            } catch (err) { }
-            expect(vestingContract).to.equal("");
+            const vestingContract = await TokenVesting.new();
+            await helpers.expectRevertTx(vestingContract.init(multisig.address, ZERO_ADDRESS));
         });
     });
 
