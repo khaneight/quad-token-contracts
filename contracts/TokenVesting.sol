@@ -241,4 +241,16 @@ contract TokenVesting {
         getToken().safeTransfer(_recipient, amountVested);
         emit vestedTokensClaimed(_recipient, amountVested);
     }
+
+    /**
+     * @notice Transfers vested tokens held by contract to a batch of recipients
+     * @param _recipients Array of addresses receiving vested tokens
+     */
+    function releaseVestedTokensBatch(address[] calldata _recipients) external {
+        require(_recipients.length != 0, "TokenVesting: not enough recipients");
+        require(_recipients.length < 256, "TokenVesting: too many recipients, max 255");
+        for (uint8 i = 0; i < _recipients.length; i++) {
+            releaseVestedTokens(_recipients[i]);
+        }
+    }
 }

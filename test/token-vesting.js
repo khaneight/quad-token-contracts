@@ -235,7 +235,7 @@ contract("TokenVestingUnitTest", accounts => {
             const currentTime = await helpers.currentBlockTime();
             const txData = vesting.contract.methods.addRecipient(
                 ACCOUNT_4,
-                currentTime + SECONDS_PER_YEAR + SECONDS_PER_MONTH,
+                currentTime,
                 web3.utils.toWei("1000"),
                 0,
                 0
@@ -256,7 +256,7 @@ contract("TokenVestingUnitTest", accounts => {
             const currentTime = await helpers.currentBlockTime();
             const txData = vesting.contract.methods.addRecipient(
                 ACCOUNT_4,
-                currentTime + SECONDS_PER_YEAR + SECONDS_PER_MONTH,
+                currentTime,
                 web3.utils.toWei("1000"),
                 12,
                 13
@@ -277,7 +277,7 @@ contract("TokenVestingUnitTest", accounts => {
             const currentTime = await helpers.currentBlockTime();
             const txData = vesting.contract.methods.addRecipient(
                 ACCOUNT_4,
-                currentTime + SECONDS_PER_YEAR + SECONDS_PER_MONTH,
+                currentTime,
                 web3.utils.toWei("1000"),
                 101,
                 12
@@ -298,7 +298,7 @@ contract("TokenVestingUnitTest", accounts => {
             const currentTime = await helpers.currentBlockTime();
             const txData = vesting.contract.methods.addRecipient(
                 ACCOUNT_4,
-                currentTime + SECONDS_PER_YEAR + SECONDS_PER_MONTH,
+                currentTime,
                 web3.utils.toWei("0"),
                 24,
                 6
@@ -356,6 +356,18 @@ contract("TokenVestingUnitTest", accounts => {
             };
             await sendMultiSigHelper(params, false);
         });
+
+        it("should fail when called by address other than multisig", async () => {
+            const currentTime = await helpers.currentBlockTime();
+            await helpers.expectRevertTx(vesting.addRecipient(
+                ACCOUNT_4,
+                currentTime,
+                web3.utils.toWei("1000"),
+                24,
+                6,
+                { from: ACCOUNT_0 }
+            ));
+        });
     });
 
     describe("When claiming vested tokens", () => {
@@ -368,9 +380,6 @@ contract("TokenVestingUnitTest", accounts => {
             { duration: 24, cliff: 6, startTimeMonthsBeforeNow: 0, monthsElapsed: 6 }, // 24 months duration, 6 months cliff cases
             { duration: 24, cliff: 6, startTimeMonthsBeforeNow: 0, monthsElapsed: 7 },
             { duration: 24, cliff: 6, startTimeMonthsBeforeNow: 0, monthsElapsed: 8 },
-            { duration: 24, cliff: 6, startTimeMonthsBeforeNow: 0, monthsElapsed: 9 },
-            { duration: 24, cliff: 6, startTimeMonthsBeforeNow: 0, monthsElapsed: 10 },
-            { duration: 24, cliff: 6, startTimeMonthsBeforeNow: 0, monthsElapsed: 11 },
             { duration: 24, cliff: 6, startTimeMonthsBeforeNow: 0, monthsElapsed: 12 },
             { duration: 24, cliff: 6, startTimeMonthsBeforeNow: 0, monthsElapsed: 18 },
             { duration: 24, cliff: 6, startTimeMonthsBeforeNow: 0, monthsElapsed: 24 },
@@ -420,7 +429,8 @@ contract("TokenVestingUnitTest", accounts => {
                 const balanceBefore = await token.balanceOf(ACCOUNT_1);
                 expect(balanceBefore).to.be.zero;
 
-                await vesting.releaseVestedTokens(ACCOUNT_1);
+                const releaseTx = await vesting.releaseVestedTokens(ACCOUNT_1);
+                console.log(`Single release of vesting tokens used ${releaseTx.receipt.gasUsed} gas total`);
                 const balanceAfter = await token.balanceOf(ACCOUNT_1);
 
                 let expectedClaimedAmount;
@@ -438,6 +448,60 @@ contract("TokenVestingUnitTest", accounts => {
                 expect(vest.monthsClaimed).to.eq.BN(vestProp.monthsElapsed + vestProp.startTimeMonthsBeforeNow);
                 expect(vest.tokensClaimed).to.eq.BN(expectedClaimedAmount);
             });
+        });
+
+        const batchRecipients = [...accounts];
+        const batchAmounts = [
+            web3.utils.toWei("25000000"),
+            web3.utils.toWei("1750000"),
+            web3.utils.toWei("3500000"),
+            web3.utils.toWei("100000"),
+            web3.utils.toWei("200000"),
+            web3.utils.toWei("300000"),
+            web3.utils.toWei("9999"),
+            web3.utils.toWei("8888"),
+            web3.utils.toWei("7777"),
+            web3.utils.toWei("6666"),
+        ];
+        const batchDuration = 12;
+        const batchCliff = 3;
+
+        it("should successfully release batches of vested tokens", async () => {
+            const currentTime = await helpers.currentBlockTime();
+            const txData = vesting.contract.methods.addRecipientBatch(
+                batchRecipients,
+                currentTime,
+                batchAmounts,
+                batchDuration,
+                batchCliff
+            ).encodeABI();
+            const params = {
+                msgSenderAddress: ACCOUNT_0,
+                otherSignerAddress: ACCOUNT_1,
+                toAddress: vesting.address,
+                amount: 0,
+                data: txData,
+                expireTime: await helpers.currentBlockTime() + 600,
+                sequenceId: await multisig.getNextSequenceId()
+            };
+            await sendMultiSigHelper(params, true);
+            await helpers.forwardTime(SECONDS_PER_MONTH * batchCliff, this);
+
+            for (let monthsElapsed = batchCliff; monthsElapsed < batchDuration; monthsElapsed+=3) {
+                const releaseTx = await vesting.releaseVestedTokensBatch(batchRecipients);
+                console.log(`Batched release of vesting tokens used ${releaseTx.receipt.gasUsed} gas total`);
+                for (let i = 0; i < batchRecipients.length; i++) {
+                    const balanceAfter = await token.balanceOf(batchRecipients[i]);
+                    let expectedClaimedAmount = new BN(batchAmounts[i]).divn(batchDuration).muln(monthsElapsed);
+                    expect(balanceAfter).to.eq.BN(expectedClaimedAmount);
+
+                    const vest = await vesting.getVestingSchedule(batchRecipients[i]);
+                    expect(vest.monthsClaimed).to.eq.BN(monthsElapsed);
+                    expect(vest.tokensClaimed).to.eq.BN(expectedClaimedAmount);
+                }
+
+                await helpers.forwardTime(SECONDS_PER_MONTH * 3, this);
+            }
         });
     });
 });
