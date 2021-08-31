@@ -8,27 +8,18 @@ import "./TokenVesting.sol";
 
 contract VestingFactory {
 
-    address public implementationAddress;
+    address public immutable implementationAddress;
 
     event VestingContractCreated(address vestingAddress, address token, address walletAddress);
 
-    constructor(address _implementationAddress) {
-        implementationAddress = _implementationAddress;
+    constructor() {
+        implementationAddress = address(new TokenVesting());
     }
 
     function createVestingContract(IERC20 _token, address _walletAddress) external returns (address) {
         address newClone = Clones.clone(implementationAddress);
         TokenVesting(newClone).init(_token, _walletAddress);
         
-        emit VestingContractCreated(newClone, address(_token), _walletAddress);
-        return newClone;
-    }
-
-    function createVestingContractDeterministic(IERC20 _token, address _walletAddress, bytes32 _salt) external returns (address) {
-        bytes32 finalSalt = keccak256(abi.encodePacked(address(_token), _walletAddress, _salt));
-        address newClone = Clones.cloneDeterministic(implementationAddress, finalSalt);
-        TokenVesting(newClone).init(_token, _walletAddress);
-
         emit VestingContractCreated(newClone, address(_token), _walletAddress);
         return newClone;
     }

@@ -52,7 +52,7 @@ contract TokenVesting {
     }
 
     modifier onlyUninitialized() {
-        require(!initialized, "Contract already initialized");
+        require(!initialized, "TokenVesting: contract already initialized");
         _;
     }
 

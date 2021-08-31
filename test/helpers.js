@@ -10,7 +10,7 @@ exports.web3GetClient = () => {
             return resolve(res);
         });
     });
-}
+};
 
 exports.currentBlockTime = () => {
     const p = new Promise((resolve, reject) => {
@@ -36,16 +36,17 @@ exports.expectRevertTx = async (promise, errorMessage) => {
     }
     expect(receipt.status, `Transaction succeeded, but expected error`).to.be.false;
     return receipt;
-}
+};
 
 exports.expectSuccessTx = async (promise) => {
     let receipt;
     try {
         ({ receipt } = await promise);
     } catch (err) { }
+    assert(receipt);
     expect(receipt.status, `Transaction error, but expected success`).to.be.true;
     return receipt;
-}
+};
 
 exports.signMultiSigTx = (params) => {
     assert(params.otherSignerAddress);
@@ -71,6 +72,82 @@ exports.signMultiSigTx = (params) => {
     const serializeSignature = '0x' + Buffer.concat([sig.r, sig.s, Buffer.from([sig.v])]).toString('hex');
 
     return serializeSignature;
+};
+
+exports.signMultiSigTokenTx = (params) => {
+    assert(params.otherSignerAddress);
+    assert(params.toAddress);
+    assert(params.amount === 0 || params.amount);
+    assert(params.tokenContractAddress);
+    assert(params.expireTime);
+    assert(params.sequenceId);
+
+    const operationHash = ethAbi.soliditySHA3(
+        ['string', 'address', 'uint', 'address', 'uint', 'uint'],
+        [
+            'ERC20',
+            params.toAddress,
+            params.amount,
+            params.tokenContractAddress,
+            params.expireTime,
+            params.sequenceId
+        ]
+    );
+
+    const sig = ethUtil.ecsign(operationHash, privateKeyForAccount(params.otherSignerAddress));
+    const serializeSignature = '0x' + Buffer.concat([sig.r, sig.s, Buffer.from([sig.v])]).toString('hex');
+
+    return serializeSignature;
+};
+
+exports.sendMultiSigHelper = async (multisig, params, expectSuccess) => {
+    const signature = exports.signMultiSigTx(params);
+    if (expectSuccess) {
+        await exports.expectSuccessTx(multisig.sendMultiSig(
+            params.toAddress,
+            params.amount,
+            params.data,
+            params.expireTime,
+            params.sequenceId,
+            signature,
+            { from: params.msgSenderAddress }
+        ));
+    } else {
+        await exports.expectRevertTx(multisig.sendMultiSig(
+            params.toAddress,
+            params.amount,
+            params.data,
+            params.expireTime,
+            params.sequenceId,
+            signature,
+            { from: params.msgSenderAddress }
+        ));
+    }
+};
+
+exports.sendMultiSigTokenHelper = async (multisig, params, expectSuccess) => {
+    const signature = exports.signMultiSigTokenTx(params);
+    if (expectSuccess) {
+        await exports.expectSuccessTx(multisig.sendMultiSigToken(
+            params.toAddress,
+            params.amount,
+            params.tokenContractAddress,
+            params.expireTime,
+            params.sequenceId,
+            signature,
+            { from: params.msgSenderAddress }
+        ));
+    } else {
+        await exports.expectRevertTx(multisig.sendMultiSigToken(
+            params.toAddress,
+            params.amount,
+            params.tokenContractAddress,
+            params.expireTime,
+            params.sequenceId,
+            signature,
+            { from: params.msgSenderAddress }
+        ));
+    }
 };
 
 exports.forwardTime = async (seconds, test) => {
@@ -110,4 +187,4 @@ exports.forwardTime = async (seconds, test) => {
         }
     });
     return p;
-}
+};

@@ -44,6 +44,14 @@ contract MultiSigWallet {
         uint256 value, // Amount of Wei sent to the address
         bytes data // Data sent when invoking the transaction
     );
+    event TokenTransacted(
+        address msgSender, // Address of the sender of the message initiating the transaction
+        address otherSigner, // Address of the signer (second signature) used to initiate the transaction
+        bytes32 operation, // Operation hash (see Data Formats)
+        address toAddress, // The address the transaction was sent to
+        uint256 value, // Amount of Wei sent to the address
+        address tokenContractAddress // Data sent when invoking the transaction
+    );
 
     event BatchTransfer(address sender, address recipient, uint256 value);
     // this event shows the other signer and the operation hash that they signed
@@ -52,6 +60,14 @@ contract MultiSigWallet {
         address msgSender, // Address of the sender of the message initiating the transaction
         address otherSigner, // Address of the signer (second signature) used to initiate the transaction
         bytes32 operation // Operation hash (see Data Formats)
+    );
+    event TokenBatchTransacted(
+        address msgSender, // Address of the sender of the message initiating the transaction
+        address otherSigner, // Address of the signer (second signature) used to initiate the transaction
+        bytes32 operation, // Operation hash (see Data Formats)
+        address[] recipients,
+        uint256[] values,
+        address tokenContractAddress
     );
 
     // Public fields
@@ -316,13 +332,13 @@ contract MultiSigWallet {
                 getTokenNetworkId(),
                 toAddress,
                 value,
-                tokenContractAddress,
+                address(tokenContractAddress),
                 expireTime,
                 sequenceId
             )
         );
 
-        verifyMultiSig(
+        address otherSigner = verifyMultiSig(
             toAddress,
             operationHash,
             signature,
@@ -331,6 +347,93 @@ contract MultiSigWallet {
         );
 
         tokenContractAddress.safeTransfer(toAddress, value);
+        emit TokenTransacted(
+            msg.sender, 
+            otherSigner, 
+            operationHash, 
+            toAddress, 
+            value, 
+            address(tokenContractAddress)
+        );
+    }
+
+    /**
+     * Execute a batched multi-signature transaction from this wallet using 2 signers: one from msg.sender and the other from ecrecover.
+     * Sequence IDs are numbers starting from 1. They are used to prevent replay attacks and may not be repeated.
+     * The recipients and values to send are encoded in two arrays, where for index i, recipients[i] will be sent values[i].
+     *
+     * @param recipients The list of recipients to send to
+     * @param values The list of values to send to
+     * @param tokenContractAddress the contract address of the ERC20 token being sent
+     * @param expireTime the number of seconds since 1970 for which this transaction is valid
+     * @param sequenceId the unique sequence id obtainable from getNextSequenceId
+     * @param signature see Data Formats
+     */
+    function sendMultiSigTokenBatch(
+        address[] calldata recipients,
+        uint256[] calldata values,
+        IERC20 tokenContractAddress,
+        uint256 expireTime,
+        uint256 sequenceId,
+        bytes calldata signature
+    ) external onlySigner {
+        require(recipients.length != 0, "Not enough recipients");
+        require(
+            recipients.length == values.length,
+            "Unequal recipients and values"
+        );
+        require(recipients.length < 256, "Too many recipients, max 255");
+
+        // Verify the other signer
+        bytes32 operationHash = keccak256(
+            abi.encodePacked(
+                getTokenNetworkId(),
+                recipients,
+                values,
+                address(tokenContractAddress),
+                expireTime,
+                sequenceId
+            )
+        );
+
+        // the first parameter (toAddress) is used to ensure transactions in safe mode only go to a signer
+        // if in safe mode, we should use normal sendMultiSig to recover, so this check will always fail if in safe mode
+        require(!safeMode, "Batch in safe mode");
+        address otherSigner = verifyMultiSig(
+            address(0x0),
+            operationHash,
+            signature,
+            expireTime,
+            sequenceId
+        );
+
+        batchTokenTransfer(recipients, values, tokenContractAddress);
+        emit TokenBatchTransacted(
+            msg.sender, 
+            otherSigner, 
+            operationHash, 
+            recipients, 
+            values, 
+            address(tokenContractAddress)
+        );
+    }
+
+    /**
+     * Transfer tokens in a batch to each of recipients
+     * @param recipients The list of recipients to send to
+     * @param values The list of values to send to recipients.
+     *  The recipient with index i in recipients array will be sent values[i].
+     *  Thus, recipients and values must be the same length
+     */
+    function batchTokenTransfer(
+        address[] calldata recipients,
+        uint256[] calldata values,
+        IERC20 tokenContractAddress
+    ) internal {
+        for (uint256 i = 0; i < recipients.length; i++) {
+            require(tokenContractAddress.balanceOf(address(this)) >= values[i], "Insufficient funds");
+            tokenContractAddress.safeTransfer(recipients[i], values[i]);
+        }
     }
 
     /**
