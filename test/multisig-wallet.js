@@ -28,7 +28,7 @@ contract("MultiSigWalletUnitTest", accounts => {
     let multisig;
 
     describe("When sending token transactions", () => {
-        before("Setup contracts before all tests", async () => {
+        beforeEach("Setup contracts before each test", async () => {
             // create wallet factory and initialize new multisig wallet
             const walletFactory = await WalletFactory.new();
             const createWalletTx = await walletFactory.createWallet([ACCOUNT_0, ACCOUNT_1, ACCOUNT_2]);
@@ -42,26 +42,50 @@ contract("MultiSigWalletUnitTest", accounts => {
         });
 
         it("should send single token transactions correctly", async () => {
-            const transferAmount1 = web3.utils.toWei("1250");
-            const transferAmount2 = web3.utils.toWei("1250");
+            const transferAmount = web3.utils.toWei("1250");
             let params = {
                 msgSenderAddress: ACCOUNT_0,
                 otherSignerAddress: ACCOUNT_1,
                 toAddress: ACCOUNT_2,
-                amount: transferAmount1,
+                amount: transferAmount,
                 tokenContractAddress: token.address,
                 expireTime: await helpers.currentBlockTime() + 600,
                 sequenceId: await multisig.getNextSequenceId()
             };
             await helpers.sendMultiSigTokenHelper(multisig, params, true);
-            const balanceAfter1 = await token.balanceOf(ACCOUNT_2);
-            expect(balanceAfter1).to.eq.BN(transferAmount1);
-            
-            params.amount = transferAmount2;
-            params.sequenceId = await multisig.getNextSequenceId();
-            await helpers.sendMultiSigTokenHelper(multisig, params, true);
-            const balanceAfter2 = await token.balanceOf(ACCOUNT_2);
-            expect(balanceAfter2).to.eq.BN(web3.utils.toWei("2500"));
+            const balanceAfter = await token.balanceOf(ACCOUNT_2);
+            expect(balanceAfter).to.eq.BN(transferAmount);
+        });
+
+        it("should send batch token transactions correctly", async () => {
+            const batchRecipients = [...accounts];
+            const batchAmounts = [
+                web3.utils.toWei("25000000"),
+                web3.utils.toWei("1750000"),
+                web3.utils.toWei("3500000"),
+                web3.utils.toWei("100000"),
+                web3.utils.toWei("200000"),
+                web3.utils.toWei("300000"),
+                web3.utils.toWei("9999"),
+                web3.utils.toWei("8888"),
+                web3.utils.toWei("7777"),
+                web3.utils.toWei("6666"),
+            ];
+            let params = {
+                msgSenderAddress: ACCOUNT_0,
+                otherSignerAddress: ACCOUNT_1,
+                recipients: batchRecipients,
+                amounts: batchAmounts,
+                tokenContractAddress: token.address,
+                expireTime: await helpers.currentBlockTime() + 600,
+                sequenceId: await multisig.getNextSequenceId()
+            };
+            await helpers.sendMultiSigTokenBatchHelper(multisig, params, true);
+
+            for (let i = 0; i < batchRecipients.length; i++) {
+                const balanceAfter = await token.balanceOf(batchRecipients[i]);
+                expect(balanceAfter).to.eq.BN(batchAmounts[i]);
+            }
         });
 
 

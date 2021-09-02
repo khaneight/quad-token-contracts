@@ -23,7 +23,7 @@
 // const fs = require('fs');
 // const mnemonic = fs.readFileSync(".secret").toString().trim();
 
-const HDWalletProvider = require("truffle-hdwallet-provider")
+const HDWalletProvider = require("@truffle/hdwallet-provider")
 require("dotenv").config();
 
 module.exports = {
@@ -82,9 +82,16 @@ module.exports = {
       gas: 4600000
     },
     ropsten: {
-      provider: () => new HDWalletProvider(process.env.MNEMONIC, `https://ropsten.infura.io/v3/${process.env.INFURA_KEY}`),
+      provider: () => new HDWalletProvider({
+        mnemonic: {
+          phrase: process.env.MNEMONIC
+        },
+        providerOrUrl: `wss://ropsten.infura.io/ws/v3/${process.env.INFURA_KEY}`
+        // providerOrUrl: 'http://localhost:8545'
+      }),
       network_id: '3',
       gas: 4600000,
+      networkCheckTimeout: 999999
     },
   },
 

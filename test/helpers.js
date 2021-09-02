@@ -100,6 +100,32 @@ exports.signMultiSigTokenTx = (params) => {
     return serializeSignature;
 };
 
+exports.signMultiSigTokenBatchTx = (params) => {
+    assert(params.otherSignerAddress);
+    assert(params.recipients);
+    assert(params.amounts);
+    assert(params.tokenContractAddress);
+    assert(params.expireTime);
+    assert(params.sequenceId);
+
+    const operationHash = ethAbi.soliditySHA3(
+        ['string', 'address[]', 'uint[]', 'address', 'uint', 'uint'],
+        [
+            'ERC20',
+            params.recipients,
+            params.amounts,
+            params.tokenContractAddress,
+            params.expireTime,
+            params.sequenceId
+        ]
+    );
+
+    const sig = ethUtil.ecsign(operationHash, privateKeyForAccount(params.otherSignerAddress));
+    const serializeSignature = '0x' + Buffer.concat([sig.r, sig.s, Buffer.from([sig.v])]).toString('hex');
+
+    return serializeSignature;
+};
+
 exports.sendMultiSigHelper = async (multisig, params, expectSuccess) => {
     const signature = exports.signMultiSigTx(params);
     if (expectSuccess) {
@@ -141,6 +167,31 @@ exports.sendMultiSigTokenHelper = async (multisig, params, expectSuccess) => {
         await exports.expectRevertTx(multisig.sendMultiSigToken(
             params.toAddress,
             params.amount,
+            params.tokenContractAddress,
+            params.expireTime,
+            params.sequenceId,
+            signature,
+            { from: params.msgSenderAddress }
+        ));
+    }
+};
+
+exports.sendMultiSigTokenBatchHelper = async (multisig, params, expectSuccess) => {
+    const signature = exports.signMultiSigTokenBatchTx(params);
+    if (expectSuccess) {
+        await exports.expectSuccessTx(multisig.sendMultiSigTokenBatch(
+            params.recipients,
+            params.amounts,
+            params.tokenContractAddress,
+            params.expireTime,
+            params.sequenceId,
+            signature,
+            { from: params.msgSenderAddress }
+        ));
+    } else {
+        await exports.expectRevertTx(multisig.sendMultiSigTokenBatch(
+            params.recipients,
+            params.amounts,
             params.tokenContractAddress,
             params.expireTime,
             params.sequenceId,
