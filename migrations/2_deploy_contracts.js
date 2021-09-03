@@ -21,14 +21,15 @@ module.exports = async function (deployer) {
     await deployer.deploy(WalletFactory);
     const walletFactory = await WalletFactory.deployed();
     
-    let createWalletTx = await walletFactory.createWallet(signers);
-    const wallet0 = await MultiSigWallet.at(createWalletTx.logs[0].args.walletAddress);
-    createWalletTx = await walletFactory.createWallet(signers);
-    const wallet1 = await MultiSigWallet.at(createWalletTx.logs[0].args.walletAddress);
-    createWalletTx - await walletFactory.createWallet(signers);
-    const wallet2 = await MultiSigWallet.at(createWalletTx.logs[0].args.walletAddress);
-    createWalletTx - await walletFactory.createWallet(signers);
-    const wallet3 = await MultiSigWallet.at(createWalletTx.logs[0].args.walletAddress);
+    const createWalletTx0 = await walletFactory.createWallet(signers);
+    const wallet0 = await MultiSigWallet.at(createWalletTx0.logs[0].args.walletAddress);
+    const createWalletTx1 = await walletFactory.createWallet(signers);
+    const wallet1 = await MultiSigWallet.at(createWalletTx1.logs[0].args.walletAddress);
+    const createWalletTx2 = await walletFactory.createWallet(signers);
+    const wallet2 = await MultiSigWallet.at(createWalletTx2.logs[0].args.walletAddress);
+    const createWalletTx3 = await walletFactory.createWallet(signers);
+    const wallet3 = await MultiSigWallet.at(createWalletTx3.logs[0].args.walletAddress);
 
+    console.log('!!!!!!!!!!!', wallet0.address, wallet1.address, wallet2.address, wallet3.address)
     await deployer.deploy(QUAD, [wallet0.address, wallet1.address, wallet2.address, wallet3.address], amounts);
 };

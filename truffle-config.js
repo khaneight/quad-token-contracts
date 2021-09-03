@@ -86,12 +86,11 @@ module.exports = {
         mnemonic: {
           phrase: process.env.MNEMONIC
         },
-        providerOrUrl: `wss://ropsten.infura.io/ws/v3/${process.env.INFURA_KEY}`
+        providerOrUrl: `https://ropsten.infura.io/v3/${process.env.INFURA_KEY}`
         // providerOrUrl: 'http://localhost:8545'
       }),
       network_id: '3',
       gas: 4600000,
-      networkCheckTimeout: 999999
     },
   },
 
