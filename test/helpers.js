@@ -207,7 +207,6 @@ exports.forwardTime = async (seconds, test) => {
         if (client.indexOf("TestRPC") === -1) {
             resolve(test.skip());
         } else {
-            console.log(`Forwarding time with ${seconds}s ...`);
             web3.currentProvider.send(
                 {
                     jsonrpc: "2.0",

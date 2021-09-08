@@ -88,6 +88,46 @@ contract("MultiSigWalletUnitTest", accounts => {
             }
         });
 
+        it("should fail when other signer same as sender", async () => {
+            const transferAmount = web3.utils.toWei("1250");
+            let params = {
+                msgSenderAddress: ACCOUNT_0,
+                otherSignerAddress: ACCOUNT_0,
+                toAddress: ACCOUNT_2,
+                amount: transferAmount,
+                tokenContractAddress: token.address,
+                expireTime: await helpers.currentBlockTime() + 600,
+                sequenceId: await multisig.getNextSequenceId()
+            };
+            await helpers.sendMultiSigTokenHelper(multisig, params, false);
+        });
 
+        it("should fail when unauthorized sender but valid other signature", async () => {
+            const transferAmount = web3.utils.toWei("1250");
+            let params = {
+                msgSenderAddress: ACCOUNT_9,
+                otherSignerAddress: ACCOUNT_0,
+                toAddress: ACCOUNT_2,
+                amount: transferAmount,
+                tokenContractAddress: token.address,
+                expireTime: await helpers.currentBlockTime() + 600,
+                sequenceId: await multisig.getNextSequenceId()
+            };
+            await helpers.sendMultiSigTokenHelper(multisig, params, false);
+        });
+
+        it("should fail when invalid signature but authorized sender", async () => {
+            const transferAmount = web3.utils.toWei("1250");
+            let params = {
+                msgSenderAddress: ACCOUNT_0,
+                otherSignerAddress: ACCOUNT_9,
+                toAddress: ACCOUNT_2,
+                amount: transferAmount,
+                tokenContractAddress: token.address,
+                expireTime: await helpers.currentBlockTime() + 600,
+                sequenceId: await multisig.getNextSequenceId()
+            };
+            await helpers.sendMultiSigTokenHelper(multisig, params, false);
+        });
     });
 });

@@ -65,7 +65,7 @@ contract("TokenVestingUnitTest", accounts => {
         expect(totalAllowance).to.eq.BN(totalSupply);
     }
 
-    describe("Initial deployment testing", () => {
+    describe("Initialization", () => {
         before("Setup contracts before running all tests", async () => {
             await setupContracts();
         });
@@ -87,7 +87,13 @@ contract("TokenVestingUnitTest", accounts => {
 
         it("should fail with 0 address for MultiSig", async () => {
             const vestingContract = await TokenVesting.new();
-            await helpers.expectRevertTx(vestingContract.init(multisig.address, ZERO_ADDRESS));
+            await helpers.expectRevertTx(vestingContract.init(token.address, ZERO_ADDRESS));
+        });
+
+        it("should fail when initialized second time", async () => {
+            const vestingContract = await TokenVesting.new();
+            await helpers.expectSuccessTx(vestingContract.init(token.address, multisig.address));
+            await helpers.expectRevertTx(vestingContract.init(token.address, ACCOUNT_0));
         });
     });
 
@@ -460,7 +466,7 @@ contract("TokenVestingUnitTest", accounts => {
                 expect(balanceBefore).to.be.zero;
 
                 const releaseTx = await vesting.releaseVestedTokens(ACCOUNT_1);
-                console.log(`Single release of vesting tokens used ${releaseTx.receipt.gasUsed} gas total`);
+                //console.log(`Single release of vesting tokens used ${releaseTx.receipt.gasUsed} gas total`);
                 const balanceAfter = await token.balanceOf(ACCOUNT_1);
 
                 let expectedClaimedAmount;
@@ -519,7 +525,7 @@ contract("TokenVestingUnitTest", accounts => {
 
             for (let monthsElapsed = batchCliff; monthsElapsed < batchDuration; monthsElapsed+=3) {
                 const releaseTx = await vesting.releaseVestedTokensBatch(batchRecipients);
-                console.log(`Batched release of vesting tokens used ${releaseTx.receipt.gasUsed} gas total`);
+                //console.log(`Batched release of vesting tokens used ${releaseTx.receipt.gasUsed} gas total`);
                 for (let i = 0; i < batchRecipients.length; i++) {
                     const balanceAfter = await token.balanceOf(batchRecipients[i]);
                     let expectedClaimedAmount = new BN(batchAmounts[i]).divn(batchDuration).muln(monthsElapsed);
