@@ -30,6 +30,5 @@ module.exports = async function (deployer) {
     const createWalletTx3 = await walletFactory.createWallet(signers);
     const wallet3 = await MultiSigWallet.at(createWalletTx3.logs[0].args.walletAddress);
 
-    console.log('!!!!!!!!!!!', wallet0.address, wallet1.address, wallet2.address, wallet3.address)
     await deployer.deploy(QUAD, [wallet0.address, wallet1.address, wallet2.address, wallet3.address], amounts);
 };

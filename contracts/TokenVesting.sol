@@ -60,6 +60,7 @@ contract TokenVesting {
         nonZeroAddress(address(_token)) nonZeroAddress(address(_multiSigContract)) {
         token = _token;
         multiSigContract = _multiSigContract;
+        initialized = true;
     }
 
     /**
