@@ -14,10 +14,6 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 contract TokenVesting {
     using SafeERC20 for IERC20;
 
-    IERC20 private token;
-    address private multiSigContract;
-    bool private initialized = false;
-
     uint32 private constant SECONDS_PER_MONTH = 2628000;
     uint32 private constant SECONDS_PER_YEAR = SECONDS_PER_MONTH * 12;
 
@@ -31,6 +27,10 @@ contract TokenVesting {
     }
 
     mapping(address => vestingSchedule) private vestingSchedules;
+
+    IERC20 private token;
+    address private multiSigContract;
+    bool private initialized = false;
 
     event vestingScheduleAdded(
         address recipient, 
@@ -64,6 +64,77 @@ contract TokenVesting {
     }
 
     /**
+     * @notice Transfers vested tokens held by contract to a batch of recipients
+     * @param _recipients Array of addresses receiving vested tokens
+     */
+    function releaseVestedTokensBatch(address[] calldata _recipients) external {
+        require(_recipients.length != 0, "TokenVesting: not enough recipients");
+        require(_recipients.length < 256, "TokenVesting: too many recipients, max 255");
+        for (uint8 i = 0; i < _recipients.length; i++) {
+            releaseVestedTokens(_recipients[i]);
+        }
+    }
+
+    /**
+     * @notice Transfers vested tokens held by contract to a specified recipient
+     * @param _recipient Address receiving vested tokens
+     */
+    function releaseVestedTokens(address _recipient) public nonZeroAddress(_recipient) {
+        uint16 monthsVested;
+        uint256 amountVested;
+        (monthsVested, amountVested) = calculateVestedTokens(_recipient);
+        require(amountVested > 0, "TokenVesting: zero vested tokens");
+
+        vestingSchedule storage vest = vestingSchedules[_recipient];
+        vest.monthsClaimed = vest.monthsClaimed + monthsVested;
+        vest.tokensClaimed = vest.tokensClaimed + amountVested;
+        
+        // Transfer tokens from this contract to recipient, reverts on failure
+        getToken().safeTransfer(_recipient, amountVested);
+        emit vestedTokensClaimed(_recipient, amountVested);
+    }
+
+    /**
+     * @notice Calculates the total unclaimed months and tokens vested for the recipient
+     * @param _recipient Address of beneficiary receiving vested tokens
+     * @return Vested months and tokens available to be claimed
+     */
+    function calculateVestedTokens(address _recipient) public view returns (uint16, uint256) {
+        vestingSchedule memory vest = vestingSchedules[_recipient];
+
+        // Check if startTime has passed
+        if (block.timestamp < vest.startTime) {
+            return (0, 0);
+        }
+
+        uint256 elapsedTime = block.timestamp - vest.startTime;
+        uint16 elapsedMonths = uint16(elapsedTime / SECONDS_PER_MONTH);
+        
+        // Check if cliff was reached
+        if (elapsedMonths < vest.vestingCliff) {
+            return (0, 0);
+        }
+
+        // If over vesting duration, all tokens vested
+        if (elapsedMonths >= vest.vestingDuration) {
+            uint256 remainingTokens = vest.amount - vest.tokensClaimed;
+            return (vest.vestingDuration, remainingTokens);
+        } else {
+            uint16 monthsVested = elapsedMonths - vest.monthsClaimed;
+            uint256 amountVestedPerMonth = vest.amount / vest.vestingDuration;
+            uint256 amountVested = monthsVested * amountVestedPerMonth;
+            return (monthsVested, amountVested);
+        }
+    }
+
+    /**
+     * @return Vesting schedule for specified recipient
+     */
+    function getVestingSchedule(address _recipient) public view returns (vestingSchedule memory) {
+        return vestingSchedules[_recipient];
+    }
+
+    /**
      * @return ERC20 token being held by contract
      */
     function getToken() public view returns (IERC20) {
@@ -75,13 +146,6 @@ contract TokenVesting {
      */
     function getMultiSigContract() public view returns (address) {
         return multiSigContract;
-    }
-
-    /**
-     * @return Vesting schedule for specified recipient
-     */
-    function getVestingSchedule(address _recipient) public view returns (vestingSchedule memory) {
-        return vestingSchedules[_recipient];
     }
 
     /**
@@ -111,7 +175,7 @@ contract TokenVesting {
         require(amountVestedPerMonth > 0, "TokenVesting: zero tokens vested per month");
 
         vestingSchedule memory vest = vestingSchedule({
-            startTime: _startTime == 0 ? block.timestamp : _startTime,
+            startTime: _startTime,
             amount: _amount,
             vestingDuration: _vestingDuration,
             vestingCliff: _vestingCliff,
@@ -167,7 +231,7 @@ contract TokenVesting {
             require(amountVestedPerMonth > 0, "TokenVesting: zero tokens vested per month");
 
             vestingSchedule memory vest = vestingSchedule({
-                startTime: _startTime == 0 ? block.timestamp : _startTime,
+                startTime: _startTime,
                 amount: amount,
                 vestingDuration: _vestingDuration,
                 vestingCliff: _vestingCliff,
@@ -189,69 +253,5 @@ contract TokenVesting {
         
         // Transfer tokens from multisig to this contract, reverts on failure
         getToken().safeTransferFrom(multiSigContract, address(this), amountTotal);
-    }
-    
-    /**
-     * @notice Calculates the total unclaimed months and tokens vested for the recipient
-     * @param _recipient Address of beneficiary receiving vested tokens
-     * @return Vested months and tokens available to be claimed
-     */
-    function calculateVestedTokens(address _recipient) public view returns (uint16, uint256) {
-        vestingSchedule memory vest = vestingSchedules[_recipient];
-
-        // Check if startTime has passed
-        if (block.timestamp < vest.startTime) {
-            return (0, 0);
-        }
-
-        uint256 elapsedTime = block.timestamp - vest.startTime;
-        uint16 elapsedMonths = uint16(elapsedTime / SECONDS_PER_MONTH);
-        
-        // Check if cliff was reached
-        if (elapsedMonths < vest.vestingCliff) {
-            return (0, 0);
-        }
-
-        // If over vesting duration, all tokens vested
-        if (elapsedMonths >= vest.vestingDuration) {
-            uint256 remainingTokens = vest.amount - vest.tokensClaimed;
-            return (vest.vestingDuration, remainingTokens);
-        } else {
-            uint16 monthsVested = elapsedMonths - vest.monthsClaimed;
-            uint256 amountVestedPerMonth = vest.amount / vest.vestingDuration;
-            uint256 amountVested = monthsVested * amountVestedPerMonth;
-            return (monthsVested, amountVested);
-        }
-    }
-
-    /**
-     * @notice Transfers vested tokens held by contract to a specified recipient
-     * @param _recipient Address receiving vested tokens
-     */
-    function releaseVestedTokens(address _recipient) public {
-        uint16 monthsVested;
-        uint256 amountVested;
-        (monthsVested, amountVested) = calculateVestedTokens(_recipient);
-        require(amountVested > 0, "TokenVesting: zero vested tokens");
-
-        vestingSchedule storage vest = vestingSchedules[_recipient];
-        vest.monthsClaimed = vest.monthsClaimed + monthsVested;
-        vest.tokensClaimed = vest.tokensClaimed + amountVested;
-        
-        // Transfer tokens from this contract to recipient, reverts on failure
-        getToken().safeTransfer(_recipient, amountVested);
-        emit vestedTokensClaimed(_recipient, amountVested);
-    }
-
-    /**
-     * @notice Transfers vested tokens held by contract to a batch of recipients
-     * @param _recipients Array of addresses receiving vested tokens
-     */
-    function releaseVestedTokensBatch(address[] calldata _recipients) external {
-        require(_recipients.length != 0, "TokenVesting: not enough recipients");
-        require(_recipients.length < 256, "TokenVesting: too many recipients, max 255");
-        for (uint8 i = 0; i < _recipients.length; i++) {
-            releaseVestedTokens(_recipients[i]);
-        }
     }
 }

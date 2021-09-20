@@ -33,7 +33,14 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 contract MultiSigWallet {
     using SafeERC20 for IERC20;
 
-    // Events
+    uint256 private constant MAX_SEQUENCE_ID_INCREASE = 10000;
+    uint256 constant SEQUENCE_ID_WINDOW_SIZE = 10;
+    uint256[SEQUENCE_ID_WINDOW_SIZE] recentSequenceIds;
+
+    mapping(address => bool) public signers; // The addresses that can co-sign transactions on the wallet
+    bool public safeMode = false; // When active, wallet may only send to signer addresses
+    bool public initialized = false; // True if the contract has been initialized
+
     event Deposited(address from, uint256 value, bytes data);
     event SafeModeActivated(address msgSender);
     event Transacted(
@@ -70,15 +77,21 @@ contract MultiSigWallet {
         address tokenContractAddress
     );
 
-    // Public fields
-    mapping(address => bool) public signers; // The addresses that can co-sign transactions on the wallet
-    bool public safeMode = false; // When active, wallet may only send to signer addresses
-    bool public initialized = false; // True if the contract has been initialized
+    /**
+     * Modifier that will execute internal code block only if the sender is an authorized signer on this wallet
+     */
+    modifier onlySigner() {
+        require(isSigner(msg.sender), "Non-signer in onlySigner method");
+        _;
+    }
 
-    // Internal fields
-    uint256 private constant MAX_SEQUENCE_ID_INCREASE = 10000;
-    uint256 constant SEQUENCE_ID_WINDOW_SIZE = 10;
-    uint256[SEQUENCE_ID_WINDOW_SIZE] recentSequenceIds;
+    /**
+     * Modifier that will execute internal code block only if the contract has not been initialized yet
+     */
+    modifier onlyUninitialized() {
+        require(!initialized, "Contract already initialized");
+        _;
+    }
 
     /**
      * Set up a simple multi-sig wallet by specifying the signers allowed to be used on this wallet.
@@ -102,64 +115,13 @@ contract MultiSigWallet {
     }
 
     /**
-     * Get the network identifier that signers must sign over
-     * This provides protection signatures being replayed on other chains
-     * This must be a virtual function because chain-specific contracts will need
-     *    to override with their own network ids. It also can't be a field
-     *    to allow this contract to be used by proxy with delegatecall, which will
-     *    not pick up on state variables
+     * Gets called when a transaction is received with ether and no data
      */
-    function getNetworkId() internal pure virtual returns (string memory) {
-        return "ETHER";
-    }
-
-    /**
-     * Get the network identifier that signers must sign over for token transfers
-     * This provides protection signatures being replayed on other chains
-     * This must be a virtual function because chain-specific contracts will need
-     *    to override with their own network ids. It also can't be a field
-     *    to allow this contract to be used by proxy with delegatecall, which will
-     *    not pick up on state variables
-     */
-    function getTokenNetworkId() internal pure virtual returns (string memory) {
-        return "ERC20";
-    }
-
-    /**
-     * Get the network identifier that signers must sign over for batch transfers
-     * This provides protection signatures being replayed on other chains
-     * This must be a virtual function because chain-specific contracts will need
-     *    to override with their own network ids. It also can't be a field
-     *    to allow this contract to be used by proxy with delegatecall, which will
-     *    not pick up on state variables
-     */
-    function getBatchNetworkId() internal pure virtual returns (string memory) {
-        return "ETHER-Batch";
-    }
-
-    /**
-     * Determine if an address is a signer on this wallet
-     * @param signer address to check
-     * returns boolean indicating whether address is signer or not
-     */
-    function isSigner(address signer) public view returns (bool) {
-        return signers[signer];
-    }
-
-    /**
-     * Modifier that will execute internal code block only if the sender is an authorized signer on this wallet
-     */
-    modifier onlySigner() {
-        require(isSigner(msg.sender), "Non-signer in onlySigner method");
-        _;
-    }
-
-    /**
-     * Modifier that will execute internal code block only if the contract has not been initialized yet
-     */
-    modifier onlyUninitialized() {
-        require(!initialized, "Contract already initialized");
-        _;
+    receive() external payable {
+        if (msg.value > 0) {
+            // Fire deposited event if we are receiving funds
+            emit Deposited(msg.sender, msg.value, "");
+        }
     }
 
     /**
@@ -173,13 +135,34 @@ contract MultiSigWallet {
     }
 
     /**
-     * Gets called when a transaction is received with ether and no data
+     * Gets the next available sequence ID for signing when using executeAndConfirm
+     * returns the sequenceId one higher than the highest currently stored
      */
-    receive() external payable {
-        if (msg.value > 0) {
-            // Fire deposited event if we are receiving funds
-            emit Deposited(msg.sender, msg.value, "");
+    function getNextSequenceId() public view returns (uint256) {
+        uint256 highestSequenceId = 0;
+        for (uint256 i = 0; i < SEQUENCE_ID_WINDOW_SIZE; i++) {
+            if (recentSequenceIds[i] > highestSequenceId) {
+                highestSequenceId = recentSequenceIds[i];
+            }
         }
+        return highestSequenceId + 1;
+    }
+
+    /**
+     * Determine if an address is a signer on this wallet
+     * @param signer address to check
+     * returns boolean indicating whether address is signer or not
+     */
+    function isSigner(address signer) public view returns (bool) {
+        return signers[signer];
+    }
+
+    /**
+     * Irrevocably puts contract into safe mode. When in this mode, transactions may only be sent to signing addresses.
+     */
+    function activateSafeMode() external onlySigner {
+        safeMode = true;
+        emit SafeModeActivated(msg.sender);
     }
 
     /**
@@ -284,27 +267,6 @@ contract MultiSigWallet {
 
         batchTransfer(recipients, values);
         emit BatchTransacted(msg.sender, otherSigner, operationHash);
-    }
-
-    /**
-     * Transfer funds in a batch to each of recipients
-     * @param recipients The list of recipients to send to
-     * @param values The list of values to send to recipients.
-     *  The recipient with index i in recipients array will be sent values[i].
-     *  Thus, recipients and values must be the same length
-     */
-    function batchTransfer(
-        address[] calldata recipients,
-        uint256[] calldata values
-    ) internal {
-        for (uint256 i = 0; i < recipients.length; i++) {
-            require(address(this).balance >= values[i], "Insufficient funds");
-
-            (bool success, ) = recipients[i].call{value: values[i]}("");
-            require(success, "Call failed");
-
-            emit BatchTransfer(msg.sender, recipients[i], values[i]);
-        }
     }
 
     /**
@@ -419,6 +381,27 @@ contract MultiSigWallet {
     }
 
     /**
+     * Transfer funds in a batch to each of recipients
+     * @param recipients The list of recipients to send to
+     * @param values The list of values to send to recipients.
+     *  The recipient with index i in recipients array will be sent values[i].
+     *  Thus, recipients and values must be the same length
+     */
+    function batchTransfer(
+        address[] calldata recipients,
+        uint256[] calldata values
+    ) internal {
+        for (uint256 i = 0; i < recipients.length; i++) {
+            require(address(this).balance >= values[i], "Insufficient funds");
+
+            (bool success, ) = recipients[i].call{value: values[i]}("");
+            require(success, "Call failed");
+
+            emit BatchTransfer(msg.sender, recipients[i], values[i]);
+        }
+    }
+
+    /**
      * Transfer tokens in a batch to each of recipients
      * @param recipients The list of recipients to send to
      * @param values The list of values to send to recipients.
@@ -434,6 +417,42 @@ contract MultiSigWallet {
             require(tokenContractAddress.balanceOf(address(this)) >= values[i], "Insufficient funds");
             tokenContractAddress.safeTransfer(recipients[i], values[i]);
         }
+    }
+
+    /**
+     * Get the network identifier that signers must sign over
+     * This provides protection signatures being replayed on other chains
+     * This must be a virtual function because chain-specific contracts will need
+     *    to override with their own network ids. It also can't be a field
+     *    to allow this contract to be used by proxy with delegatecall, which will
+     *    not pick up on state variables
+     */
+    function getNetworkId() internal pure virtual returns (string memory) {
+        return "ETHER";
+    }
+
+    /**
+     * Get the network identifier that signers must sign over for token transfers
+     * This provides protection signatures being replayed on other chains
+     * This must be a virtual function because chain-specific contracts will need
+     *    to override with their own network ids. It also can't be a field
+     *    to allow this contract to be used by proxy with delegatecall, which will
+     *    not pick up on state variables
+     */
+    function getTokenNetworkId() internal pure virtual returns (string memory) {
+        return "ERC20";
+    }
+
+    /**
+     * Get the network identifier that signers must sign over for batch transfers
+     * This provides protection signatures being replayed on other chains
+     * This must be a virtual function because chain-specific contracts will need
+     *    to override with their own network ids. It also can't be a field
+     *    to allow this contract to be used by proxy with delegatecall, which will
+     *    not pick up on state variables
+     */
+    function getBatchNetworkId() internal pure virtual returns (string memory) {
+        return "ETHER-Batch";
     }
 
     /**
@@ -475,14 +494,6 @@ contract MultiSigWallet {
         require(otherSigner != msg.sender, "Signers cannot be equal");
 
         return otherSigner;
-    }
-
-    /**
-     * Irrevocably puts contract into safe mode. When in this mode, transactions may only be sent to signing addresses.
-     */
-    function activateSafeMode() external onlySigner {
-        safeMode = true;
-        emit SafeModeActivated(msg.sender);
     }
 
     /**
@@ -533,7 +544,7 @@ contract MultiSigWallet {
      * greater than the minimum element in the window.
      * @param sequenceId to insert into array of stored ids
      */
-    function tryInsertSequenceId(uint256 sequenceId) private onlySigner {
+    function tryInsertSequenceId(uint256 sequenceId) private {
         // Keep a pointer to the lowest value element in the window
         uint256 lowestValueIndex = 0;
         // fetch recentSequenceIds into memory for function context to avoid unnecessary sloads
@@ -567,19 +578,5 @@ contract MultiSigWallet {
         );
 
         recentSequenceIds[lowestValueIndex] = sequenceId;
-    }
-
-    /**
-     * Gets the next available sequence ID for signing when using executeAndConfirm
-     * returns the sequenceId one higher than the highest currently stored
-     */
-    function getNextSequenceId() public view returns (uint256) {
-        uint256 highestSequenceId = 0;
-        for (uint256 i = 0; i < SEQUENCE_ID_WINDOW_SIZE; i++) {
-            if (recentSequenceIds[i] > highestSequenceId) {
-                highestSequenceId = recentSequenceIds[i];
-            }
-        }
-        return highestSequenceId + 1;
     }
 }

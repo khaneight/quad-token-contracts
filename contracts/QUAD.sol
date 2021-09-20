@@ -7,6 +7,7 @@ import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
 
 contract QUAD is ERC20, ERC20Burnable {
     constructor(address[] memory wallets, uint256[] memory amounts) ERC20("QUAD Token", "QUAD") {
+        require(wallets.length == amounts.length, "QUAD: wallets and amounts mismatch");
         for (uint256 i = 0; i < wallets.length; i++){
             _mint(wallets[i], amounts[i]);
             if(i == 10){
