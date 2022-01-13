@@ -92,6 +92,18 @@ module.exports = {
       network_id: '3',
       gas: 4600000,
     },
+    mainnet: {
+      provider: () => new HDWalletProvider({
+        mnemonic: {
+          phrase: process.env.MNEMONIC_MAIN
+        },
+        providerOrUrl: `https://mainnet.infura.io/v3/${process.env.INFURA_KEY_MAIN}`
+        // providerOrUrl: 'http://localhost:8545'
+      }),
+      network_id: '1',
+      gas: 4600000,
+      gasPrice: 150000000000
+    },
   },
 
   // Set default mocha options here, use special reporters etc.
